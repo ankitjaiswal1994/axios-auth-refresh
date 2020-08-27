@@ -3,13 +3,13 @@ import axios, { AxiosInstance, AxiosPromise } from "axios";
 
 export interface AxiosAuthRefreshCache {
   skipInstances: AxiosInstance[];
-  refreshCall: Promise<any>|undefined;
-  requestQueueInterceptorId: number|undefined;
+  refreshCall: Promise<any> | undefined;
+  requestQueueInterceptorId: number | undefined;
 }
 
 export const defaultOptions: AxiosAuthRefreshOptions = {
-  statusCodes: [ 401 ],
-  skipWhileRefreshing: true,
+  statusCodes: [401],
+  pauseInstanceWhileRefreshing: false,
 };
 
 /**
@@ -18,10 +18,14 @@ export const defaultOptions: AxiosAuthRefreshOptions = {
  * @return {AxiosAuthRefreshOptions}
  */
 export function mergeOptions(
-    target: AxiosAuthRefreshOptions,
-    source: AxiosAuthRefreshOptions,
+  defaults: AxiosAuthRefreshOptions,
+  options: AxiosAuthRefreshOptions
 ): AxiosAuthRefreshOptions {
-  return { ...target, ...source };
+  return {
+    ...defaults,
+    pauseInstanceWhileRefreshing: options.skipWhileRefreshing,
+    ...options,
+  };
 }
 
 /**
@@ -31,24 +35,30 @@ export function mergeOptions(
  * @return {boolean}
  */
 export function shouldInterceptError(
-    error: any,
-    options: AxiosAuthRefreshOptions,
-    instance: AxiosInstance,
-    cache: AxiosAuthRefreshCache,
+  error: any,
+  options: AxiosAuthRefreshOptions,
+  instance: AxiosInstance,
+  cache: AxiosAuthRefreshCache
 ): boolean {
   if (!error) {
     return false;
   }
 
-  if (error.config && error.config.skipAuthRefresh) {
+  if (error.config?.skipAuthRefresh) {
     return false;
   }
 
-  if (!error.response || !options.statusCodes.includes(parseInt(error.response.status))) {
+  if (
+    !error.response ||
+    !options.statusCodes.includes(parseInt(error.response.status))
+  ) {
     return false;
   }
 
-  return !options.skipWhileRefreshing || !cache.skipInstances.includes(instance);
+  return (
+    !options.pauseInstanceWhileRefreshing ||
+    !cache.skipInstances.includes(instance)
+  );
 }
 
 /**
@@ -57,14 +67,16 @@ export function shouldInterceptError(
  * @return {Promise<any>}
  */
 export function createRefreshCall(
-    error: any,
-    fn: (error: any) => Promise<any>,
-    cache: AxiosAuthRefreshCache,
+  error: any,
+  fn: (error: any) => Promise<any>,
+  cache: AxiosAuthRefreshCache
 ): Promise<any> {
   if (!cache.refreshCall) {
     cache.refreshCall = fn(error);
-    if (typeof cache.refreshCall.then !== 'function') {
-      console.warn('axios-auth-refresh requires `refreshTokenCall` to return a promise.');
+    if (typeof cache.refreshCall.then !== "function") {
+      console.warn(
+        "axios-auth-refresh requires `refreshTokenCall` to return a promise."
+      );
       return Promise.reject();
     }
   }
@@ -77,18 +89,20 @@ export function createRefreshCall(
  * @return {number}
  */
 export function createRequestQueueInterceptor(
-    instance: AxiosInstance,
-    cache: AxiosAuthRefreshCache,
-    options: AxiosAuthRefreshOptions,
+  instance: AxiosInstance,
+  cache: AxiosAuthRefreshCache,
+  options: AxiosAuthRefreshOptions
 ): number {
-  if (typeof cache.requestQueueInterceptorId === 'undefined') {
-    cache.requestQueueInterceptorId = instance.interceptors.request.use((request) => {
-      return cache.refreshCall
+  if (typeof cache.requestQueueInterceptorId === "undefined") {
+    cache.requestQueueInterceptorId = instance.interceptors.request.use(
+      (request) => {
+        return cache.refreshCall
           .catch(() => {
-            throw new axios.Cancel('Request call failed');
+            throw new axios.Cancel("Request call failed");
           })
-          .then(() => options.onRetry ? options.onRetry(request) : request);
-    });
+          .then(() => (options.onRetry ? options.onRetry(request) : request));
+      }
+    );
   }
   return cache.requestQueueInterceptorId;
 }
@@ -100,13 +114,15 @@ export function createRequestQueueInterceptor(
  * @param {AxiosAuthRefreshCache} cache
  */
 export function unsetCache(
-    instance: AxiosInstance,
-    cache: AxiosAuthRefreshCache,
+  instance: AxiosInstance,
+  cache: AxiosAuthRefreshCache
 ): void {
   instance.interceptors.request.eject(cache.requestQueueInterceptorId);
   cache.requestQueueInterceptorId = undefined;
   cache.refreshCall = undefined;
-  cache.skipInstances = cache.skipInstances.filter(skipInstance => skipInstance !== instance);
+  cache.skipInstances = cache.skipInstances.filter(
+    (skipInstance) => skipInstance !== instance
+  );
 }
 
 /**
@@ -115,7 +131,10 @@ export function unsetCache(
  * @param instance
  * @param options
  */
-export function getRetryInstance(instance: AxiosInstance, options: AxiosAuthRefreshOptions): AxiosInstance {
+export function getRetryInstance(
+  instance: AxiosInstance,
+  options: AxiosAuthRefreshOptions
+): AxiosInstance {
   return options.retryInstance || instance;
 }
 
@@ -127,8 +146,8 @@ export function getRetryInstance(instance: AxiosInstance, options: AxiosAuthRefr
  * @return AxiosPromise
  */
 export function resendFailedRequest(
-    error: any,
-    instance: AxiosInstance
+  error: any,
+  instance: AxiosInstance
 ): AxiosPromise {
   error.config.skipAuthRefresh = true;
   return instance(error.response.config);

@@ -1,31 +1,32 @@
-import { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+import { AxiosInstance, AxiosRequestConfig, AxiosResponse } from "axios";
 import {
-    unsetCache,
-    mergeOptions,
-    defaultOptions,
-    getRetryInstance,
-    createRefreshCall,
-    resendFailedRequest,
-    shouldInterceptError,
-    AxiosAuthRefreshCache,
-    createRequestQueueInterceptor,
+  unsetCache,
+  mergeOptions,
+  defaultOptions,
+  getRetryInstance,
+  createRefreshCall,
+  resendFailedRequest,
+  shouldInterceptError,
+  AxiosAuthRefreshCache,
+  createRequestQueueInterceptor,
 } from "./utils";
 
 export interface AxiosAuthRefreshOptions {
-    statusCodes?: Array<number>;
-    retryInstance?: AxiosInstance;
-    skipWhileRefreshing?: boolean;
-    onRetry?: (requestConfig: AxiosRequestConfig) => AxiosRequestConfig
+  statusCodes?: Array<number>;
+  retryInstance?: AxiosInstance;
+  skipWhileRefreshing?: boolean;
+  pauseInstanceWhileRefreshing?: boolean;
+  onRetry?: (requestConfig: AxiosRequestConfig) => AxiosRequestConfig;
 }
 
 export interface AxiosAuthRefreshRequestConfig extends AxiosRequestConfig {
-    skipAuthRefresh?: boolean;
+  skipAuthRefresh?: boolean;
 }
 
 const cache: AxiosAuthRefreshCache = {
-    skipInstances: [],
-    refreshCall: undefined,
-    requestQueueInterceptorId: undefined,
+  skipInstances: [],
+  refreshCall: undefined,
+  requestQueueInterceptorId: undefined,
 };
 
 /**
@@ -44,33 +45,41 @@ const cache: AxiosAuthRefreshCache = {
  * @return {number} - interceptor id (in case you want to eject it manually)
  */
 export default function createAuthRefreshInterceptor(
-    instance: AxiosInstance,
-    refreshAuthCall: (error: any) => Promise<any>,
-    options: AxiosAuthRefreshOptions = {},
+  instance: AxiosInstance,
+  refreshAuthCall: (error: any) => Promise<any>,
+  options: AxiosAuthRefreshOptions = {}
 ): number {
-    if (typeof refreshAuthCall !== 'function') {
-        throw new Error('axios-auth-refresh requires `refreshAuthCall` to be a function that returns a promise.');
-    }
+  if (typeof refreshAuthCall !== "function") {
+    throw new Error(
+      "axios-auth-refresh requires `refreshAuthCall` to be a function that returns a promise."
+    );
+  }
 
-    return instance.interceptors.response.use((response: AxiosResponse) => response, (error: any) => {
+  return instance.interceptors.response.use(
+    (response: AxiosResponse) => response,
+    (error: any) => {
+      options = mergeOptions(defaultOptions, options);
 
-        options = mergeOptions(defaultOptions, options);
+      if (!shouldInterceptError(error, options, instance, cache)) {
+        return Promise.reject(error);
+      }
 
-        if (!shouldInterceptError(error, options, instance, cache)) {
-            return Promise.reject(error);
-        }
-
+      if (options.pauseInstanceWhileRefreshing) {
         cache.skipInstances.push(instance);
+      }
 
-        // If refresh call does not exist, create one
-        const refreshing = createRefreshCall(error, refreshAuthCall, cache);
+      // If refresh call does not exist, create one
+      const refreshing = createRefreshCall(error, refreshAuthCall, cache);
 
-        // Create interceptor that will bind all the others requests until refreshAuthCall is resolved
-        createRequestQueueInterceptor(instance, cache, options);
+      // Create interceptor that will bind all the others requests until refreshAuthCall is resolved
+      createRequestQueueInterceptor(instance, cache, options);
 
-        return refreshing
-            .finally(() => unsetCache(instance, cache))
-            .catch(error => Promise.reject(error))
-            .then(() => resendFailedRequest(error, getRetryInstance(instance, options)));
-    });
+      return refreshing
+        .finally(() => unsetCache(instance, cache))
+        .catch((error) => Promise.reject(error))
+        .then(() =>
+          resendFailedRequest(error, getRetryInstance(instance, options))
+        );
+    }
+  );
 }
